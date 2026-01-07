@@ -325,13 +325,13 @@ export function AttributeFilter({
             return typedFeatureValue != typedValue;
 
           case "contains":
-            return typedFeatureValue.includes(typedValue);
+            return String(typedFeatureValue).includes(String(typedValue));
 
           case "startsWith":
-            return typedFeatureValue.startsWith(typedValue);
+            return String(typedFeatureValue).startsWith(String(typedValue));
 
           case "endsWith":
-            return typedFeatureValue.endsWith(typedValue);
+            return String(typedFeatureValue).endsWith(String(typedValue));
 
           case "isEmpty":
             return (
