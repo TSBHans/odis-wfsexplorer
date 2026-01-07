@@ -63,12 +63,16 @@ export interface FilterCondition {
   value2?: string; // For "between" operators
 }
 
+export type FilterConditionInput = Omit<FilterCondition, "id"> & {
+  id?: string;
+};
+
 interface AttributeFilterProps {
   data: any;
   attributes: string[];
   onFilterChange: (filteredData: any) => void;
   onActiveFiltersChange?: (filters: FilterCondition[]) => void; // Add this line
-  initialFilters?: FilterCondition[];
+  initialFilters?: FilterConditionInput[];
 }
 
 export function AttributeFilter({
@@ -91,11 +95,30 @@ export function AttributeFilter({
 
   const { t } = useLanguage();
 
+  const buildFilterId = (condition: FilterConditionInput, index: number) => {
+    if (condition.id) return condition.id;
+    return [
+      condition.attribute,
+      condition.operator,
+      condition.value,
+      condition.value2 ?? "",
+      index,
+    ].join("|");
+  };
+
+  const normalizeFilters = (filters: FilterConditionInput[]) => {
+    return filters.map((condition, index) => ({
+      ...condition,
+      id: buildFilterId(condition, index),
+    }));
+  };
+
   useEffect(() => {
     if (!data || !Array.isArray(initialFilters) || initialFilters.length === 0)
       return;
-    setFilterConditions(initialFilters);
-    applyFilters(initialFilters);
+    const normalizedFilters = normalizeFilters(initialFilters);
+    setFilterConditions(normalizedFilters);
+    applyFilters(normalizedFilters);
   }, [data, initialFilters]);
 
   // Reset filters when data changes completely (new layer loaded)

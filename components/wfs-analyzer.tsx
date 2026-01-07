@@ -45,7 +45,11 @@ import { LayerSelector } from "@/components/layer-selector";
 import { FeatureCountSelector } from "@/components/feature-count-selector";
 import { AttributeExplorer } from "@/components/attribute-explorer";
 import { AttributeStats } from "@/components/attribute-stats";
-import { AttributeFilter, type FilterCondition } from "@/components/attribute-filter";
+import {
+  AttributeFilter,
+  type FilterCondition,
+  type FilterConditionInput,
+} from "@/components/attribute-filter";
 import { DownloadOptions } from "@/components/download-options";
 import { DownloadFilteredOptions } from "@/components/download-filtered-options";
 import dynamic from "next/dynamic";
@@ -117,8 +121,12 @@ export default function WfsAnalyzer() {
   const [errorType, setErrorType] = useState<
     "network" | "auth" | "notFound" | "badRequest" | "server" | "unknown" | null
   >(null);
-  const [activeFilters, setActiveFilters] = useState<FilterCondition[]>([]);
-  const [initialFilters, setInitialFilters] = useState<FilterCondition[]>([]);
+  const [activeFilters, setActiveFilters] = useState<FilterConditionInput[]>(
+    []
+  );
+  const [initialFilters, setInitialFilters] = useState<FilterConditionInput[]>(
+    []
+  );
   const hasLoadedFilters = useRef(false);
   const hasLoadedLayerFromUrl = useRef(false);
 
