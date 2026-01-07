@@ -55,7 +55,7 @@ const DATE_OPERATORS = [
 ];
 
 // Define filter condition interface
-interface FilterCondition {
+export interface FilterCondition {
   id: string;
   attribute: string;
   operator: string;
@@ -68,6 +68,7 @@ interface AttributeFilterProps {
   attributes: string[];
   onFilterChange: (filteredData: any) => void;
   onActiveFiltersChange?: (filters: FilterCondition[]) => void; // Add this line
+  initialFilters?: FilterCondition[];
 }
 
 export function AttributeFilter({
@@ -75,6 +76,7 @@ export function AttributeFilter({
   attributes,
   onFilterChange,
   onActiveFiltersChange,
+  initialFilters,
 }: AttributeFilterProps) {
   const [filterConditions, setFilterConditions] = useState<FilterCondition[]>(
     []
@@ -88,6 +90,12 @@ export function AttributeFilter({
   >({});
 
   const { t } = useLanguage();
+
+  useEffect(() => {
+    if (!data || !initialFilters || initialFilters.length === 0) return;
+    setFilterConditions(initialFilters);
+    applyFilters(initialFilters);
+  }, [data, initialFilters]);
 
   // Reset filters when data changes completely (new layer loaded)
   useEffect(() => {
@@ -255,8 +263,8 @@ export function AttributeFilter({
   };
 
   // Apply filters to data
-  const applyFilters = () => {
-    if (!data || !data.features || filterConditions.length === 0) {
+  const applyFilters = (conditions: FilterCondition[] = filterConditions) => {
+    if (!data || !data.features || conditions.length === 0) {
       onFilterChange(data);
       setActiveFilters([]);
       setFilteredCount(null);
@@ -265,7 +273,7 @@ export function AttributeFilter({
     }
 
     const filteredFeatures = data.features.filter((feature: any) => {
-      return filterConditions.every((condition) => {
+      return conditions.every((condition) => {
         const { attribute, operator, value, value2 } = condition;
         const featureValue = feature.properties[attribute];
 
@@ -383,11 +391,11 @@ export function AttributeFilter({
 
     // Update filtered count and active filters
     setFilteredCount(filteredFeatures.length);
-    setActiveFilters([...filterConditions]);
+    setActiveFilters([...conditions]);
 
     // Notify parent about active filters
     if (onActiveFiltersChange) {
-      onActiveFiltersChange([...filterConditions]);
+      onActiveFiltersChange([...conditions]);
     }
 
     // Pass filtered data to parent component
@@ -400,6 +408,7 @@ export function AttributeFilter({
     setActiveFilters([]);
     setFilteredCount(null);
     onFilterChange(data);
+    if (onActiveFiltersChange) onActiveFiltersChange([]);
   };
 
   // Get operator label from value
