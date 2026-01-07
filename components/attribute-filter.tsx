@@ -113,14 +113,6 @@ export function AttributeFilter({
     }));
   };
 
-  useEffect(() => {
-    if (!data || !Array.isArray(initialFilters) || initialFilters.length === 0)
-      return;
-    const normalizedFilters = normalizeFilters(initialFilters);
-    setFilterConditions(normalizedFilters);
-    applyFilters(normalizedFilters);
-  }, [data, initialFilters]);
-
   // Reset filters when data changes completely (new layer loaded)
   useEffect(() => {
     if (!data) {
@@ -430,6 +422,14 @@ export function AttributeFilter({
     // Pass filtered data to parent component
     onFilterChange(filteredData);
   };
+
+  useEffect(() => {
+    if (!data || !Array.isArray(initialFilters) || initialFilters.length === 0)
+      return;
+    const normalizedFilters = normalizeFilters(initialFilters);
+    setFilterConditions(normalizedFilters);
+    applyFilters(normalizedFilters);
+  }, [data, initialFilters]);
 
   // Clear all filters
   const clearFilters = () => {
