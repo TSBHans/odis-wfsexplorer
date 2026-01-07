@@ -45,7 +45,11 @@ import { LayerSelector } from "@/components/layer-selector";
 import { FeatureCountSelector } from "@/components/feature-count-selector";
 import { AttributeExplorer } from "@/components/attribute-explorer";
 import { AttributeStats } from "@/components/attribute-stats";
-import { AttributeFilter } from "@/components/attribute-filter";
+import {
+  AttributeFilter,
+  type FilterCondition,
+  type FilterConditionInput,
+} from "@/components/attribute-filter";
 import { DownloadOptions } from "@/components/download-options";
 import { DownloadFilteredOptions } from "@/components/download-filtered-options";
 import dynamic from "next/dynamic";
@@ -117,7 +121,14 @@ export default function WfsAnalyzer() {
   const [errorType, setErrorType] = useState<
     "network" | "auth" | "notFound" | "badRequest" | "server" | "unknown" | null
   >(null);
-  const [activeFilters, setActiveFilters] = useState<any[]>([]);
+  const [activeFilters, setActiveFilters] = useState<FilterConditionInput[]>(
+    []
+  );
+  const [initialFilters, setInitialFilters] = useState<FilterConditionInput[]>(
+    []
+  );
+  const hasLoadedFilters = useRef(false);
+  const hasLoadedLayerFromUrl = useRef(false);
 
   // All hooks must be called before any conditional returns
   useEffect(() => {
@@ -135,12 +146,12 @@ export default function WfsAnalyzer() {
     }
   }, []);
 
-  let firstLoad = false;
   useEffect(() => {
     if (typeof window !== "undefined") {
-      if (firstLoad) return;
+      if (hasLoadedLayerFromUrl.current) return;
       const params = new URLSearchParams(window.location.search);
       const wfsLayer = params.get("layer");
+      const filtersParam = params.get("filters");
 
       const layerFound = availableLayers.filter((l) => {
         if (l.id === wfsLayer) {
@@ -155,7 +166,20 @@ export default function WfsAnalyzer() {
         }, 0);
       }
 
-      firstLoad = true;
+      if (filtersParam && !hasLoadedFilters.current) {
+        try {
+          const parsedFilters = JSON.parse(decodeURIComponent(filtersParam));
+          if (Array.isArray(parsedFilters)) {
+            setInitialFilters(parsedFilters);
+            setActiveFilters(parsedFilters);
+          }
+        } catch (error) {
+          console.warn("Failed to parse filters from URL:", error);
+        }
+        hasLoadedFilters.current = true;
+      }
+
+      hasLoadedLayerFromUrl.current = true;
     }
   }, [availableLayers]);
 
@@ -207,6 +231,9 @@ export default function WfsAnalyzer() {
       const newUrl = new URL(window.location.href);
       newUrl.searchParams.delete("wfs");
       newUrl.searchParams.delete("layer");
+      newUrl.searchParams.delete("filters");
+      setActiveFilters([]);
+      setInitialFilters([]);
 
       window.history.pushState(
         { path: newUrl.toString() },
@@ -215,6 +242,24 @@ export default function WfsAnalyzer() {
       );
     }
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const newUrl = new URL(window.location.href);
+
+    if (activeFilters.length > 0) {
+      const encodedFilters = encodeURIComponent(JSON.stringify(activeFilters));
+      newUrl.searchParams.set("filters", encodedFilters);
+    } else {
+      newUrl.searchParams.delete("filters");
+    }
+
+    window.history.replaceState(
+      { path: newUrl.toString() },
+      "",
+      newUrl.toString()
+    );
+  }, [activeFilters]);
 
   // Copy current URL to clipboard
   const copyUrlToClipboard = () => {
@@ -278,6 +323,8 @@ export default function WfsAnalyzer() {
     setWfsData(null);
     setFilteredData(null);
     setAttributes([]);
+    setActiveFilters([]);
+    setInitialFilters([]);
     setTotalFeatureCount(null);
     setHasGeometry(false);
     setSourceProjection("EPSG:4326");
@@ -521,7 +568,7 @@ export default function WfsAnalyzer() {
   };
 
   // Handle filter changes
-  const handleFilterChange = (newFilteredData: any, filters: any[]) => {
+  const handleFilterChange = (newFilteredData: any) => {
     if (newFilteredData && wfsData) {
       // Add total feature count to the filtered data
       newFilteredData.totalFeatures = wfsData.features.length;
@@ -533,6 +580,9 @@ export default function WfsAnalyzer() {
         wfsData &&
         newFilteredData.features.length !== wfsData.features.length
     );
+  };
+
+  const handleActiveFiltersChange = (filters: FilterCondition[]) => {
     setActiveFilters(filters);
   };
 
@@ -553,6 +603,8 @@ export default function WfsAnalyzer() {
       setWfsData(null);
       setFilteredData(null);
       setAttributes([]);
+      setActiveFilters([]);
+      setInitialFilters([]);
       setSelectedLayer(null);
       setTotalFeatureCount(null);
       setHasGeometry(false);
@@ -1403,9 +1455,9 @@ export default function WfsAnalyzer() {
                     <AttributeFilter
                       data={wfsData}
                       attributes={attributes}
-                      onFilterChange={(newFilteredData, filters) =>
-                        handleFilterChange(newFilteredData, filters)
-                      }
+                      initialFilters={initialFilters}
+                      onFilterChange={handleFilterChange}
+                      onActiveFiltersChange={handleActiveFiltersChange}
                     />
                   </CardContent>
                 </Card>
