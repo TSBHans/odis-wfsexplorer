@@ -92,7 +92,8 @@ export function AttributeFilter({
   const { t } = useLanguage();
 
   useEffect(() => {
-    if (!data || !initialFilters || initialFilters.length === 0) return;
+    if (!data || !Array.isArray(initialFilters) || initialFilters.length === 0)
+      return;
     setFilterConditions(initialFilters);
     applyFilters(initialFilters);
   }, [data, initialFilters]);
@@ -264,7 +265,12 @@ export function AttributeFilter({
 
   // Apply filters to data
   const applyFilters = (conditions: FilterCondition[] = filterConditions) => {
-    if (!data || !data.features || conditions.length === 0) {
+    if (
+      !data ||
+      !data.features ||
+      !Array.isArray(conditions) ||
+      conditions.length === 0
+    ) {
       onFilterChange(data);
       setActiveFilters([]);
       setFilteredCount(null);
