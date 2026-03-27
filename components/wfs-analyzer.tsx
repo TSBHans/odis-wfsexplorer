@@ -83,6 +83,7 @@ export default function WfsAnalyzer() {
   type SearchDataset = {
     name: string;
     url: string;
+    unavailableReason?: string;
   };
 
   const { t } = useLanguage();
@@ -128,10 +129,123 @@ export default function WfsAnalyzer() {
   const [datasetsParamUrl, setDatasetsParamUrl] = useState<string | null>(null);
   const [isDatasetsLoading, setIsDatasetsLoading] = useState(false);
   const [datasetsError, setDatasetsError] = useState<string | null>(null);
+  const [datasetInfoMessage, setDatasetInfoMessage] = useState<string | null>(
+    null
+  );
+
+  const getTextByLocalName = (parent: Element, localName: string) => {
+    const node = Array.from(parent.getElementsByTagName("*")).find(
+      (element) => element.localName === localName
+    );
+
+    return node?.textContent?.trim() || "";
+  };
+
+  const looksLikeWfs = (url: string, protocol: string, name: string) => {
+    const joined = `${url} ${protocol} ${name}`.toLowerCase();
+    return (
+      joined.includes("wfs") ||
+      url.toLowerCase().includes("service=wfs") ||
+      url.toLowerCase().includes("/wfs")
+    );
+  };
+
+  const looksLikeWms = (url: string, protocol: string, name: string) => {
+    const joined = `${url} ${protocol} ${name}`.toLowerCase();
+    return (
+      joined.includes("wms") ||
+      url.toLowerCase().includes("service=wms") ||
+      url.toLowerCase().includes("/wms")
+    );
+  };
+
+  const resolveDatasetFromCsw = async (
+    mdId: string,
+    cswUrl: string
+  ): Promise<SearchDataset> => {
+    const cswEndpoint = new URL(cswUrl);
+    cswEndpoint.searchParams.set("service", "CSW");
+    cswEndpoint.searchParams.set("request", "GetRecordById");
+    cswEndpoint.searchParams.set("version", "2.0.2");
+    cswEndpoint.searchParams.set(
+      "outputschema",
+      "http://www.isotc211.org/2005/gmd"
+    );
+    cswEndpoint.searchParams.set("elementsetname", "full");
+    cswEndpoint.searchParams.set("id", mdId);
+
+    const response = await fetch(cswEndpoint.toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/xml,text/xml",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Could not load CSW record ${mdId}. Server returned ${response.status} ${response.statusText}.`
+      );
+    }
+
+    const xmlText = await response.text();
+    const xmlDoc = new DOMParser().parseFromString(xmlText, "text/xml");
+
+    const onlineResources = Array.from(xmlDoc.getElementsByTagName("*")).filter(
+      (element) => element.localName === "CI_OnlineResource"
+    );
+
+    const wfsResources = onlineResources
+      .map((resource) => {
+        const url = getTextByLocalName(resource, "URL");
+        const protocol = getTextByLocalName(resource, "protocol");
+        const name = getTextByLocalName(resource, "name");
+        return { url, protocol, name };
+      })
+      .filter(
+        (resource) =>
+          resource.url &&
+          looksLikeWfs(resource.url, resource.protocol, resource.name)
+      );
+
+    const wmsResources = onlineResources
+      .map((resource) => {
+        const url = getTextByLocalName(resource, "URL");
+        const protocol = getTextByLocalName(resource, "protocol");
+        const name = getTextByLocalName(resource, "name");
+        return { url, protocol, name };
+      })
+      .filter(
+        (resource) =>
+          resource.url &&
+          looksLikeWms(resource.url, resource.protocol, resource.name)
+      );
+
+    if (wfsResources.length > 0) {
+      return {
+        name: mdId,
+        url: wfsResources[0].url,
+      };
+    }
+
+    if (wmsResources.length > 0) {
+      return {
+        name: mdId,
+        url: "",
+        unavailableReason: "Only WMS was found in this CSW record.",
+      };
+    }
+
+    return {
+      name: mdId,
+      url: "",
+      unavailableReason: "No WFS endpoint was found in this CSW record.",
+    };
+  };
 
   const getDatasets = async (datasetsUrl: string) => {
     setIsDatasetsLoading(true);
     setDatasetsError(null);
+    setDatasetInfoMessage(null);
 
     const response = await fetch(datasetsUrl, {
       method: "GET",
@@ -153,14 +267,48 @@ export default function WfsAnalyzer() {
       );
     }
 
-    const datasets = (res as Array<{ name?: unknown; url?: unknown }>)
-      .filter((d) => typeof d?.url === "string" && d.url.trim() !== "")
-      .map((d) => ({
-        name: typeof d.name === "string" ? d.name : "",
-        url: d.url as string,
-      }));
+    const rawDatasets = res as Array<{
+      name?: unknown;
+      url?: unknown;
+      typ?: unknown;
+      md_id?: unknown;
+      csw_url?: unknown;
+    }>;
 
-    setSearchDatasets(datasets);
+    const datasets = await Promise.all(
+      rawDatasets.map(async (d) => {
+        if (typeof d?.url === "string" && d.url.trim() !== "") {
+          return {
+            name: typeof d.name === "string" ? d.name : d.url,
+            url: d.url,
+          } as SearchDataset;
+        }
+
+        if (typeof d?.md_id === "string" && typeof d?.csw_url === "string") {
+          try {
+            const resolved = await resolveDatasetFromCsw(d.md_id, d.csw_url);
+            return {
+              ...resolved,
+              name: typeof d.name === "string" ? d.name : resolved.name,
+            } as SearchDataset;
+          } catch (error) {
+            const message =
+              error instanceof Error
+                ? error.message
+                : `Could not resolve CSW record ${d.md_id}.`;
+            return {
+              name: typeof d.name === "string" ? d.name : d.md_id,
+              url: "",
+              unavailableReason: message,
+            } as SearchDataset;
+          }
+        }
+
+        return null;
+      })
+    );
+
+    setSearchDatasets(datasets.filter((dataset): dataset is SearchDataset => !!dataset));
   };
 
   // All hooks must be called before any conditional returns
@@ -998,23 +1146,36 @@ export default function WfsAnalyzer() {
                   ) : (
                     filteredDatasets.map((dataset) => (
                       <button
-                        key={dataset.url}
+                        key={`${dataset.name}-${dataset.url || "no-wfs"}`}
                         onClick={() => {
+                          if (dataset.unavailableReason) {
+                            setDatasetInfoMessage(
+                              `${dataset.name}: ${dataset.unavailableReason}`
+                            );
+                            return;
+                          }
+                          setDatasetInfoMessage(null);
                           setWfsUrl(dataset.url);
                           analyzeWfsUrl(dataset.url);
                         }}
-                        className="w-full text-left px-3 py-2 hover:bg-slate-100 border-b last:border-b-0"
+                        className="w-full text-left px-3 py-2 hover:bg-slate-100 border-b last:border-b-0 disabled:opacity-70 disabled:cursor-not-allowed"
+                        disabled={Boolean(dataset.unavailableReason)}
                       >
                         <div className="font-medium text-sm text-slate-900">
                           {dataset.name || "Unnamed dataset"}
                         </div>
                         <div className="text-xs text-slate-500 break-all">
-                          {dataset.url}
+                          {dataset.url || dataset.unavailableReason}
                         </div>
                       </button>
                     ))
                   )}
                 </div>
+                {datasetInfoMessage && (
+                  <div className="mt-2 text-xs text-amber-700">
+                    {datasetInfoMessage}
+                  </div>
+                )}
               </div>
             )}
 
