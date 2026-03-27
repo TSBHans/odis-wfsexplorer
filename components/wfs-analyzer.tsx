@@ -80,6 +80,11 @@ const MapPreview = dynamic(() => import("@/components/map-preview"), {
 
 // Change to default export
 export default function WfsAnalyzer() {
+  type SearchDataset = {
+    name: string;
+    url: string;
+  };
+
   const { t } = useLanguage();
   const [wfsUrl, setWfsUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -118,12 +123,52 @@ export default function WfsAnalyzer() {
     "network" | "auth" | "notFound" | "badRequest" | "server" | "unknown" | null
   >(null);
   const [activeFilters, setActiveFilters] = useState<any[]>([]);
+  const [searchDatasets, setSearchDatasets] = useState<SearchDataset[]>([]);
+  const [datasetSearchTerm, setDatasetSearchTerm] = useState("");
+  const [datasetsParamUrl, setDatasetsParamUrl] = useState<string | null>(null);
+  const [isDatasetsLoading, setIsDatasetsLoading] = useState(false);
+  const [datasetsError, setDatasetsError] = useState<string | null>(null);
+
+  const getDatasets = async (datasetsUrl: string) => {
+    setIsDatasetsLoading(true);
+    setDatasetsError(null);
+
+    const response = await fetch(datasetsUrl, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Could not load datasets from ${datasetsUrl}. Server returned ${response.status} ${response.statusText}.`
+      );
+    }
+
+    const res = await response.json();
+    if (!Array.isArray(res)) {
+      throw new Error(
+        `Datasets file at ${datasetsUrl} must be a JSON array of objects with name and url fields.`
+      );
+    }
+
+    const datasets = (res as Array<{ name?: unknown; url?: unknown }>)
+      .filter((d) => typeof d?.url === "string" && d.url.trim() !== "")
+      .map((d) => ({
+        name: typeof d.name === "string" ? d.name : "",
+        url: d.url as string,
+      }));
+
+    setSearchDatasets(datasets);
+  };
 
   // All hooks must be called before any conditional returns
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const wfsParam = params.get("wfs");
+      const datasetsParam = params.get("datasets");
 
       if (wfsParam) {
         console.log("Loading WFS from URL parameter:", wfsParam);
@@ -132,8 +177,30 @@ export default function WfsAnalyzer() {
           analyzeWfsUrl(wfsParam);
         }, 0);
       }
+
+      if (datasetsParam) {
+        setDatasetsParamUrl(datasetsParam);
+        getDatasets(datasetsParam).catch((err) => {
+          const message =
+            err instanceof Error ? err.message : "Unable to load datasets file.";
+          setDatasetsError(message);
+          setSearchDatasets([]);
+        }).finally(() => {
+          setIsDatasetsLoading(false);
+        });
+      }
     }
   }, []);
+
+  const filteredDatasets = searchDatasets.filter((dataset) => {
+    const query = datasetSearchTerm.trim().toLowerCase();
+    if (!query) return true;
+
+    return (
+      dataset.name.toLowerCase().includes(query) ||
+      dataset.url.toLowerCase().includes(query)
+    );
+  });
 
   let firstLoad = false;
   useEffect(() => {
@@ -904,6 +971,52 @@ export default function WfsAnalyzer() {
                 </div>
               )}
             </div>
+
+            {datasetsParamUrl && (
+              <div className="mt-4 rounded-lg border border-slate-200 p-3 bg-slate-50">
+                <p className="text-sm font-medium text-slate-700 mb-2">
+                  Dataset list
+                </p>
+                <Input
+                  placeholder="Search datasets by name or URL"
+                  value={datasetSearchTerm}
+                  onChange={(e) => setDatasetSearchTerm(e.target.value)}
+                  className="mb-2 bg-white"
+                />
+                <div className="max-h-64 overflow-auto rounded-md border bg-white">
+                  {isDatasetsLoading ? (
+                    <div className="p-3 text-sm text-slate-500 flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading datasets...
+                    </div>
+                  ) : datasetsError ? (
+                    <div className="p-3 text-sm text-red-700">{datasetsError}</div>
+                  ) : filteredDatasets.length === 0 ? (
+                    <div className="p-3 text-sm text-slate-500">
+                      No datasets match your search.
+                    </div>
+                  ) : (
+                    filteredDatasets.map((dataset) => (
+                      <button
+                        key={dataset.url}
+                        onClick={() => {
+                          setWfsUrl(dataset.url);
+                          analyzeWfsUrl(dataset.url);
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-slate-100 border-b last:border-b-0"
+                      >
+                        <div className="font-medium text-sm text-slate-900">
+                          {dataset.name || "Unnamed dataset"}
+                        </div>
+                        <div className="text-xs text-slate-500 break-all">
+                          {dataset.url}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Example datasets - collapsible */}
             <div className="mt-1">
