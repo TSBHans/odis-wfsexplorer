@@ -83,6 +83,9 @@ export default function WfsAnalyzer() {
   type SearchDataset = {
     name: string;
     url: string;
+    typ?: string;
+    mdId?: string;
+    cswUrl?: string;
     unavailableReason?: string;
   };
 
@@ -125,11 +128,14 @@ export default function WfsAnalyzer() {
   >(null);
   const [activeFilters, setActiveFilters] = useState<any[]>([]);
   const [searchDatasets, setSearchDatasets] = useState<SearchDataset[]>([]);
-  const [datasetSearchTerm, setDatasetSearchTerm] = useState("");
   const [datasetsParamUrl, setDatasetsParamUrl] = useState<string | null>(null);
   const [isDatasetsLoading, setIsDatasetsLoading] = useState(false);
   const [datasetsError, setDatasetsError] = useState<string | null>(null);
   const [datasetInfoMessage, setDatasetInfoMessage] = useState<string | null>(
+    null
+  );
+  const [showDatasetDropdown, setShowDatasetDropdown] = useState(false);
+  const [resolvingDatasetKey, setResolvingDatasetKey] = useState<string | null>(
     null
   );
 
@@ -275,40 +281,27 @@ export default function WfsAnalyzer() {
       csw_url?: unknown;
     }>;
 
-    const datasets = await Promise.all(
-      rawDatasets.map(async (d) => {
-        if (typeof d?.url === "string" && d.url.trim() !== "") {
-          return {
-            name: typeof d.name === "string" ? d.name : d.url,
-            url: d.url,
-          } as SearchDataset;
-        }
+    const datasets = rawDatasets
+      .map((d) => {
+        const name = typeof d.name === "string" ? d.name : "";
+        const url = typeof d.url === "string" ? d.url : "";
+        const typ = typeof d.typ === "string" ? d.typ.toLowerCase() : undefined;
+        const mdId = typeof d.md_id === "string" ? d.md_id : undefined;
+        const cswUrl = typeof d.csw_url === "string" ? d.csw_url : undefined;
 
-        if (typeof d?.md_id === "string" && typeof d?.csw_url === "string") {
-          try {
-            const resolved = await resolveDatasetFromCsw(d.md_id, d.csw_url);
-            return {
-              ...resolved,
-              name: typeof d.name === "string" ? d.name : resolved.name,
-            } as SearchDataset;
-          } catch (error) {
-            const message =
-              error instanceof Error
-                ? error.message
-                : `Could not resolve CSW record ${d.md_id}.`;
-            return {
-              name: typeof d.name === "string" ? d.name : d.md_id,
-              url: "",
-              unavailableReason: message,
-            } as SearchDataset;
-          }
-        }
+        if (!name && !url && !mdId) return null;
 
-        return null;
+        return {
+          name: name || mdId || url || "Unnamed dataset",
+          url,
+          typ,
+          mdId,
+          cswUrl,
+        } as SearchDataset;
       })
-    );
+      .filter((dataset): dataset is SearchDataset => !!dataset);
 
-    setSearchDatasets(datasets.filter((dataset): dataset is SearchDataset => !!dataset));
+    setSearchDatasets(datasets);
   };
 
   // All hooks must be called before any conditional returns
@@ -341,7 +334,7 @@ export default function WfsAnalyzer() {
   }, []);
 
   const filteredDatasets = searchDatasets.filter((dataset) => {
-    const query = datasetSearchTerm.trim().toLowerCase();
+    const query = wfsUrl.trim().toLowerCase();
     if (!query) return true;
 
     return (
@@ -569,6 +562,57 @@ export default function WfsAnalyzer() {
 
   const handleAnalyze = () => {
     analyzeWfsUrl(wfsUrl);
+  };
+
+  const handleDatasetSelect = async (dataset: SearchDataset) => {
+    const datasetKey = `${dataset.name}-${dataset.mdId || dataset.url}`;
+    setDatasetInfoMessage(null);
+    setResolvingDatasetKey(datasetKey);
+
+    try {
+      let urlToAnalyze = dataset.url;
+      const shouldResolveCsw =
+        Boolean(dataset.mdId && dataset.cswUrl) &&
+        (dataset.typ === "wms" || looksLikeWms(dataset.url, "", ""));
+
+      if (shouldResolveCsw && dataset.mdId && dataset.cswUrl) {
+        const resolved = await resolveDatasetFromCsw(dataset.mdId, dataset.cswUrl);
+
+        if (!resolved.url) {
+          setDatasetInfoMessage(
+            `${dataset.name}: ${
+              resolved.unavailableReason || "Only WMS was found for this record."
+            }`
+          );
+          return;
+        }
+
+        urlToAnalyze = resolved.url;
+
+        setSearchDatasets((prev) =>
+          prev.map((entry) =>
+            entry.mdId === dataset.mdId
+              ? { ...entry, url: resolved.url, typ: "wfs", unavailableReason: undefined }
+              : entry
+          )
+        );
+      }
+
+      if (!urlToAnalyze) {
+        setDatasetInfoMessage(`${dataset.name}: No WFS URL available.`);
+        return;
+      }
+
+      setWfsUrl(urlToAnalyze);
+      setShowDatasetDropdown(false);
+      analyzeWfsUrl(urlToAnalyze);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to resolve dataset record.";
+      setDatasetInfoMessage(`${dataset.name}: ${message}`);
+    } finally {
+      setResolvingDatasetKey(null);
+    }
   };
 
   // Update the fetchLayerData function to properly pass the URL to fetchLayerDataWithMaxFeatures
@@ -1017,6 +1061,10 @@ export default function WfsAnalyzer() {
                     value={wfsUrl}
                     onChange={(e) => {
                       setWfsUrl(e.target.value);
+                      if (datasetsParamUrl) {
+                        setShowDatasetDropdown(true);
+                        setDatasetInfoMessage(null);
+                      }
                       updateUrlParameter("");
 
                       // If URL changes significantly, clear all previous data
@@ -1037,9 +1085,17 @@ export default function WfsAnalyzer() {
                         setErrorType(null);
                       }
                     }}
+                    onFocus={() => {
+                      if (datasetsParamUrl && searchDatasets.length > 0) {
+                        setShowDatasetDropdown(true);
+                      }
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
+                        setShowDatasetDropdown(false);
                         handleAnalyze();
+                      } else if (e.key === "Escape") {
+                        setShowDatasetDropdown(false);
                       }
                     }}
                     className="py-6 px-4 pr-10 text-lg border-0 focus-visible:ring-1 focus-visible:ring-[#1a3a8f] focus-visible:ring-offset-0 rounded-l-md !rounded-r-none"
@@ -1051,6 +1107,7 @@ export default function WfsAnalyzer() {
                       className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0"
                       onClick={() => {
                         setWfsUrl("");
+                        setShowDatasetDropdown(false);
                         // Clear all data when input is cleared
                         setSelectedLayer(null);
                         setAvailableLayers([]);
@@ -1100,6 +1157,48 @@ export default function WfsAnalyzer() {
                 </Button>
               </div>
 
+              {datasetsParamUrl && showDatasetDropdown && (
+                <div className="absolute z-40 mt-1 w-full rounded-md border bg-white shadow-lg">
+                  <div className="max-h-64 overflow-auto">
+                    {isDatasetsLoading ? (
+                      <div className="p-3 text-sm text-slate-500 flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading datasets...
+                      </div>
+                    ) : datasetsError ? (
+                      <div className="p-3 text-sm text-red-700">{datasetsError}</div>
+                    ) : filteredDatasets.length === 0 ? (
+                      <div className="p-3 text-sm text-slate-500">
+                        No datasets match your search.
+                      </div>
+                    ) : (
+                      filteredDatasets.map((dataset) => {
+                        const datasetKey = `${dataset.name}-${dataset.mdId || dataset.url}`;
+                        const isResolving = resolvingDatasetKey === datasetKey;
+                        return (
+                          <button
+                            key={datasetKey}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => handleDatasetSelect(dataset)}
+                            className="w-full text-left px-3 py-2 hover:bg-slate-100 border-b last:border-b-0 disabled:opacity-70 disabled:cursor-not-allowed"
+                            disabled={isResolving}
+                          >
+                            <div className="font-medium text-sm text-slate-900">
+                              {dataset.name || "Unnamed dataset"}
+                            </div>
+                            <div className="text-xs text-slate-500 break-all">
+                              {isResolving
+                                ? "Resolving CSW record..."
+                                : dataset.url || "Resolve from CSW record"}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+
               {wfsData && wfsUrl && !error && (
                 <div className="absolute right-0 top-full mt-2">
                   <Button
@@ -1119,64 +1218,8 @@ export default function WfsAnalyzer() {
                 </div>
               )}
             </div>
-
-            {datasetsParamUrl && (
-              <div className="mt-4 rounded-lg border border-slate-200 p-3 bg-slate-50">
-                <p className="text-sm font-medium text-slate-700 mb-2">
-                  Dataset list
-                </p>
-                <Input
-                  placeholder="Search datasets by name or URL"
-                  value={datasetSearchTerm}
-                  onChange={(e) => setDatasetSearchTerm(e.target.value)}
-                  className="mb-2 bg-white"
-                />
-                <div className="max-h-64 overflow-auto rounded-md border bg-white">
-                  {isDatasetsLoading ? (
-                    <div className="p-3 text-sm text-slate-500 flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Loading datasets...
-                    </div>
-                  ) : datasetsError ? (
-                    <div className="p-3 text-sm text-red-700">{datasetsError}</div>
-                  ) : filteredDatasets.length === 0 ? (
-                    <div className="p-3 text-sm text-slate-500">
-                      No datasets match your search.
-                    </div>
-                  ) : (
-                    filteredDatasets.map((dataset) => (
-                      <button
-                        key={`${dataset.name}-${dataset.url || "no-wfs"}`}
-                        onClick={() => {
-                          if (dataset.unavailableReason) {
-                            setDatasetInfoMessage(
-                              `${dataset.name}: ${dataset.unavailableReason}`
-                            );
-                            return;
-                          }
-                          setDatasetInfoMessage(null);
-                          setWfsUrl(dataset.url);
-                          analyzeWfsUrl(dataset.url);
-                        }}
-                        className="w-full text-left px-3 py-2 hover:bg-slate-100 border-b last:border-b-0 disabled:opacity-70 disabled:cursor-not-allowed"
-                        disabled={Boolean(dataset.unavailableReason)}
-                      >
-                        <div className="font-medium text-sm text-slate-900">
-                          {dataset.name || "Unnamed dataset"}
-                        </div>
-                        <div className="text-xs text-slate-500 break-all">
-                          {dataset.url || dataset.unavailableReason}
-                        </div>
-                      </button>
-                    ))
-                  )}
-                </div>
-                {datasetInfoMessage && (
-                  <div className="mt-2 text-xs text-amber-700">
-                    {datasetInfoMessage}
-                  </div>
-                )}
-              </div>
+            {datasetInfoMessage && (
+              <div className="mt-2 text-xs text-amber-700">{datasetInfoMessage}</div>
             )}
 
             {/* Example datasets - collapsible */}
