@@ -288,20 +288,50 @@ export default function WfsAnalyzer() {
     setDatasetsError(null);
     setDatasetInfoMessage(null);
 
-    const response = await fetch(datasetsUrl, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
+    let res: unknown;
+    let directFetchError: string | null = null;
 
-    if (!response.ok) {
-      throw new Error(
-        `Could not load datasets from ${datasetsUrl}. Server returned ${response.status} ${response.statusText}.`
-      );
+    try {
+      const response = await fetch(datasetsUrl, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Server returned ${response.status} ${response.statusText}.`
+        );
+      }
+
+      res = await response.json();
+    } catch (error) {
+      directFetchError =
+        error instanceof Error ? error.message : "Unknown client fetch error.";
     }
 
-    const res = await response.json();
+    if (!res) {
+      const proxyResponse = await fetch(
+        `/api/datasets-proxy?url=${encodeURIComponent(datasetsUrl)}`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+        }
+      );
+
+      if (!proxyResponse.ok) {
+        throw new Error(
+          `Could not load datasets from ${datasetsUrl}. Direct request failed (${directFetchError || "unknown error"}) and proxy returned ${proxyResponse.status} ${proxyResponse.statusText}.`
+        );
+      }
+
+      const proxyPayload = await proxyResponse.json();
+      res = proxyPayload?.data;
+    }
+
     if (!Array.isArray(res)) {
       throw new Error(
         `Datasets file at ${datasetsUrl} must be a JSON array of objects with name and url fields.`
