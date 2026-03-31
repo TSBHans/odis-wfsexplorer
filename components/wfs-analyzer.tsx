@@ -1389,7 +1389,7 @@ export default function WfsAnalyzer() {
                                     ? "…"
                                     : wmsStatus === "wfs"
                                     ? "✓"
-                                    : t("onlyWMSavailable")}
+                                    : "x"}
                                 </span>
                               )}
                             </div>
