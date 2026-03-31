@@ -373,7 +373,12 @@ export default function WfsAnalyzer() {
           cswUrl,
         } as SearchDataset;
       })
-      .filter((dataset): dataset is SearchDataset => !!dataset);
+      .filter((dataset): dataset is SearchDataset => !!dataset)
+      .sort((a, b) =>
+        (a.name || a.url || "").localeCompare(b.name || b.url || "", undefined, {
+          sensitivity: "base",
+        })
+      );
 
     setSearchDatasets(datasets);
   };
