@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useLanguage } from "@/lib/language-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -360,6 +360,15 @@ export default function WfsAnalyzer() {
     );
   });
 
+  const defaultVisibleDatasetKeys = useMemo(() => {
+    const firstVisible = filteredDatasets.slice(0, 8);
+    return new Set(
+      firstVisible.map(
+        (dataset) => `${dataset.name}-${dataset.mdId || dataset.url}`
+      )
+    );
+  }, [filteredDatasets]);
+
   let firstLoad = false;
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -639,13 +648,18 @@ export default function WfsAnalyzer() {
     if (!showDatasetDropdown) return;
 
     const pendingWms = filteredDatasets.filter(
-      (dataset) =>
-        dataset.typ === "wms" &&
-        Boolean(dataset.mdId && dataset.cswUrl) &&
-        visibleDatasetKeys[`${dataset.name}-${dataset.mdId || dataset.url}`] ===
-          true &&
-        wmsResolutionState[`${dataset.name}-${dataset.mdId || dataset.url}`] ===
-          undefined
+      (dataset) => {
+        const datasetKey = `${dataset.name}-${dataset.mdId || dataset.url}`;
+        const isVisible =
+          visibleDatasetKeys[datasetKey] ?? defaultVisibleDatasetKeys.has(datasetKey);
+
+        return (
+          dataset.typ === "wms" &&
+          Boolean(dataset.mdId && dataset.cswUrl) &&
+          isVisible &&
+          wmsResolutionState[datasetKey] === undefined
+        );
+      }
     );
 
     if (pendingWms.length === 0) return;
@@ -710,7 +724,13 @@ export default function WfsAnalyzer() {
     return () => {
       timers.forEach((timerId) => window.clearTimeout(timerId));
     };
-  }, [filteredDatasets, showDatasetDropdown, visibleDatasetKeys, wmsResolutionState]);
+  }, [
+    defaultVisibleDatasetKeys,
+    filteredDatasets,
+    showDatasetDropdown,
+    visibleDatasetKeys,
+    wmsResolutionState,
+  ]);
 
   useEffect(() => {
     if (!showDatasetDropdown || !datasetListRef.current) {
@@ -1304,7 +1324,7 @@ export default function WfsAnalyzer() {
                         No datasets match your search.
                       </div>
                     ) : (
-                      filteredDatasets.map((dataset) => {
+                      filteredDatasets.map((dataset, i) => {
                         const datasetKey = `${dataset.name}-${dataset.mdId || dataset.url}`;
                         const isResolving = resolvingDatasetKey === datasetKey;
                         const wmsStatus =
@@ -1316,7 +1336,7 @@ export default function WfsAnalyzer() {
                           (dataset.typ === "wms" && wmsStatus === "no-wfs");
                         return (
                           <button
-                            key={datasetKey}
+                            key={datasetKey + i}
                             ref={(node) => {
                               datasetItemRefs.current[datasetKey] = node;
                             }}
