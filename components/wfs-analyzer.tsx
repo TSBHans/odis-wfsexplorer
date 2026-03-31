@@ -138,6 +138,9 @@ export default function WfsAnalyzer() {
   const [resolvingDatasetKey, setResolvingDatasetKey] = useState<string | null>(
     null
   );
+  const [wmsResolutionState, setWmsResolutionState] = useState<
+    Record<string, "unchecked" | "checking" | "wfs" | "no-wfs">
+  >({});
 
   const getTextByLocalName = (parent: Element, localName: string) => {
     const node = Array.from(parent.getElementsByTagName("*")).find(
@@ -290,6 +293,7 @@ export default function WfsAnalyzer() {
         const cswUrl = typeof d.csw_url === "string" ? d.csw_url : undefined;
 
         if (!name && !url && !mdId) return null;
+        if (typ && typ !== "wfs" && typ !== "wms") return null;
 
         return {
           name: name || mdId || url || "Unnamed dataset",
@@ -579,6 +583,7 @@ export default function WfsAnalyzer() {
         const resolved = await resolveDatasetFromCsw(dataset.mdId, dataset.cswUrl);
 
         if (!resolved.url) {
+          setWmsResolutionState((prev) => ({ ...prev, [datasetKey]: "no-wfs" }));
           setDatasetInfoMessage(
             `${dataset.name}: ${
               resolved.unavailableReason || "Only WMS was found for this record."
@@ -588,6 +593,7 @@ export default function WfsAnalyzer() {
         }
 
         urlToAnalyze = resolved.url;
+        setWmsResolutionState((prev) => ({ ...prev, [datasetKey]: "wfs" }));
 
         setSearchDatasets((prev) =>
           prev.map((entry) =>
@@ -609,11 +615,87 @@ export default function WfsAnalyzer() {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to resolve dataset record.";
+      setWmsResolutionState((prev) => ({ ...prev, [datasetKey]: "no-wfs" }));
       setDatasetInfoMessage(`${dataset.name}: ${message}`);
     } finally {
       setResolvingDatasetKey(null);
     }
   };
+
+  useEffect(() => {
+    if (!showDatasetDropdown) return;
+
+    const pendingWms = filteredDatasets.filter(
+      (dataset) =>
+        dataset.typ === "wms" &&
+        Boolean(dataset.mdId && dataset.cswUrl) &&
+        wmsResolutionState[`${dataset.name}-${dataset.mdId || dataset.url}`] ===
+          undefined
+    );
+
+    if (pendingWms.length === 0) return;
+
+    const timers = pendingWms.map((dataset) =>
+      window.setTimeout(async () => {
+        const datasetKey = `${dataset.name}-${dataset.mdId || dataset.url}`;
+        setWmsResolutionState((prev) => ({ ...prev, [datasetKey]: "checking" }));
+
+        try {
+          const resolved = await resolveDatasetFromCsw(
+            dataset.mdId as string,
+            dataset.cswUrl as string
+          );
+          if (resolved.url) {
+            setWmsResolutionState((prev) => ({ ...prev, [datasetKey]: "wfs" }));
+            setSearchDatasets((prev) =>
+              prev.map((entry) =>
+                entry.mdId === dataset.mdId
+                  ? {
+                      ...entry,
+                      url: resolved.url,
+                      typ: "wfs",
+                      unavailableReason: undefined,
+                    }
+                  : entry
+              )
+            );
+          } else {
+            setWmsResolutionState((prev) => ({ ...prev, [datasetKey]: "no-wfs" }));
+            setSearchDatasets((prev) =>
+              prev.map((entry) =>
+                entry.mdId === dataset.mdId
+                  ? {
+                      ...entry,
+                      unavailableReason:
+                        resolved.unavailableReason ||
+                        "Only WMS was found in this CSW record.",
+                    }
+                  : entry
+              )
+            );
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Failed to resolve CSW.";
+          setWmsResolutionState((prev) => ({ ...prev, [datasetKey]: "no-wfs" }));
+          setSearchDatasets((prev) =>
+            prev.map((entry) =>
+              entry.mdId === dataset.mdId
+                ? {
+                    ...entry,
+                    unavailableReason: message,
+                  }
+                : entry
+            )
+          );
+        }
+      }, 500)
+    );
+
+    return () => {
+      timers.forEach((timerId) => window.clearTimeout(timerId));
+    };
+  }, [filteredDatasets, showDatasetDropdown, wmsResolutionState]);
 
   // Update the fetchLayerData function to properly pass the URL to fetchLayerDataWithMaxFeatures
   const fetchLayerData = async (layer: LayerInfo, urlOverride?: string) => {
@@ -1175,20 +1257,51 @@ export default function WfsAnalyzer() {
                       filteredDatasets.map((dataset) => {
                         const datasetKey = `${dataset.name}-${dataset.mdId || dataset.url}`;
                         const isResolving = resolvingDatasetKey === datasetKey;
+                        const wmsStatus =
+                          dataset.typ === "wms"
+                            ? wmsResolutionState[datasetKey] || "unchecked"
+                            : null;
+                        const isDisabled =
+                          isResolving ||
+                          (dataset.typ === "wms" && wmsStatus === "no-wfs");
                         return (
                           <button
                             key={datasetKey}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => handleDatasetSelect(dataset)}
                             className="w-full text-left px-3 py-2 hover:bg-slate-100 border-b last:border-b-0 disabled:opacity-70 disabled:cursor-not-allowed"
-                            disabled={isResolving}
+                            disabled={isDisabled}
                           >
-                            <div className="font-medium text-sm text-slate-900">
+                            <div className="font-medium text-sm text-slate-900 flex items-center justify-between gap-2">
                               {dataset.name || "Unnamed dataset"}
+                              {dataset.typ === "wms" && (
+                                <span
+                                  className="text-xs font-semibold"
+                                  title={
+                                    wmsStatus === "unchecked"
+                                      ? "WFS alternative not checked yet"
+                                      : wmsStatus === "checking"
+                                      ? "Checking CSW for WFS alternative"
+                                      : wmsStatus === "wfs"
+                                      ? "WFS alternative found"
+                                      : "No WFS alternative found"
+                                  }
+                                >
+                                  {wmsStatus === "unchecked"
+                                    ? "?"
+                                    : wmsStatus === "checking"
+                                    ? "…"
+                                    : wmsStatus === "wfs"
+                                    ? "✓"
+                                    : "x"}
+                                </span>
+                              )}
                             </div>
                             <div className="text-xs text-slate-500 break-all">
                               {isResolving
                                 ? "Resolving CSW record..."
+                                : dataset.typ === "wms" && wmsStatus === "no-wfs"
+                                ? dataset.unavailableReason || "No WFS alternative found."
                                 : dataset.url || "Resolve from CSW record"}
                             </div>
                           </button>
