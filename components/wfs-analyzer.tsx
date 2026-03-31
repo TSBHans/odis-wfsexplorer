@@ -714,7 +714,9 @@ export default function WfsAnalyzer() {
 
   useEffect(() => {
     if (!showDatasetDropdown || !datasetListRef.current) {
-      setVisibleDatasetKeys({});
+      setVisibleDatasetKeys((prev) =>
+        Object.keys(prev).length > 0 ? {} : prev
+      );
       return;
     }
 
