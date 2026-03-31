@@ -146,6 +146,7 @@ export default function WfsAnalyzer() {
   >({});
   const datasetListRef = useRef<HTMLDivElement>(null);
   const datasetItemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const datasetDropdownWrapperRef = useRef<HTMLDivElement>(null);
 
   const getTextByLocalName = (parent: Element, localName: string) => {
     const node = Array.from(parent.getElementsByTagName("*")).find(
@@ -254,6 +255,32 @@ export default function WfsAnalyzer() {
       url: "",
       unavailableReason: "No WFS endpoint was found in this CSW record.",
     };
+  };
+
+  const sanitizeWfsUrl = (url: string) => {
+    let cleanUrl = url.trim();
+
+    if (
+      cleanUrl.includes("GetCapabilities") ||
+      cleanUrl.includes("getcapabilities")
+    ) {
+      try {
+        const urlObj = new URL(cleanUrl);
+        const params = new URLSearchParams(urlObj.search);
+        params.delete("request");
+        params.delete("service");
+        params.delete("version");
+
+        const remainingParams = params.toString();
+        cleanUrl = `${urlObj.origin}${urlObj.pathname}${
+          remainingParams ? `?${remainingParams}` : ""
+        }`;
+      } catch (e) {
+        console.error("Error cleaning URL:", e);
+      }
+    }
+
+    return cleanUrl;
   };
 
   const getDatasets = async (datasetsUrl: string) => {
@@ -525,32 +552,7 @@ export default function WfsAnalyzer() {
     // Update URL parameter
     updateUrlParameter(url);
 
-    // Clean up the URL if needed
-    let cleanUrl = url.trim();
-
-    // If the URL already has GetCapabilities, extract the base URL
-    if (
-      cleanUrl.includes("GetCapabilities") ||
-      cleanUrl.includes("getcapabilities")
-    ) {
-      try {
-        const urlObj = new URL(cleanUrl);
-        // Remove specific WFS parameters to get the base URL
-        const params = new URLSearchParams(urlObj.search);
-        params.delete("request");
-        params.delete("service");
-        params.delete("version");
-
-        // Reconstruct the URL without WFS-specific parameters
-        const remainingParams = params.toString();
-        cleanUrl = `${urlObj.origin}${urlObj.pathname}${
-          remainingParams ? `?${remainingParams}` : ""
-        }`;
-      } catch (e) {
-        console.error("Error cleaning URL:", e);
-        // Continue with the original URL if there's an error
-      }
-    }
+    const cleanUrl = sanitizeWfsUrl(url);
 
     try {
       // First, fetch the capabilities to get available layers
@@ -633,9 +635,10 @@ export default function WfsAnalyzer() {
         return;
       }
 
-      setWfsUrl(urlToAnalyze);
+      const cleanedUrl = sanitizeWfsUrl(urlToAnalyze);
+      setWfsUrl(cleanedUrl);
       setShowDatasetDropdown(false);
-      analyzeWfsUrl(urlToAnalyze);
+      analyzeWfsUrl(cleanedUrl);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to resolve dataset record.";
@@ -768,6 +771,23 @@ export default function WfsAnalyzer() {
 
     return () => observer.disconnect();
   }, [filteredDatasets, showDatasetDropdown]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!showDatasetDropdown) return;
+
+      const targetNode = event.target as Node;
+      if (
+        datasetDropdownWrapperRef.current &&
+        !datasetDropdownWrapperRef.current.contains(targetNode)
+      ) {
+        setShowDatasetDropdown(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showDatasetDropdown]);
 
   // Update the fetchLayerData function to properly pass the URL to fetchLayerDataWithMaxFeatures
   const fetchLayerData = async (layer: LayerInfo, urlOverride?: string) => {
@@ -1206,7 +1226,7 @@ export default function WfsAnalyzer() {
             {/* Feature overview with icons only by default */}
 
             {/* Search input */}
-            <div className="relative">
+            <div className="relative" ref={datasetDropdownWrapperRef}>
               <div className="flex border rounded-lg overflow-hidden">
                 <div className="relative flex-grow">
                   <Input
