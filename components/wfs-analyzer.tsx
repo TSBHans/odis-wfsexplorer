@@ -350,15 +350,17 @@ export default function WfsAnalyzer() {
     }
   }, []);
 
-  const filteredDatasets = searchDatasets.filter((dataset) => {
+  const filteredDatasets = useMemo(() => {
     const query = wfsUrl.trim().toLowerCase();
-    if (!query) return true;
+    if (!query) return searchDatasets;
 
-    return (
-      dataset.name.toLowerCase().includes(query) ||
-      dataset.url.toLowerCase().includes(query)
-    );
-  });
+    return searchDatasets.filter((dataset) => {
+      return (
+        dataset.name.toLowerCase().includes(query) ||
+        dataset.url.toLowerCase().includes(query)
+      );
+    });
+  }, [searchDatasets, wfsUrl]);
 
   const defaultVisibleDatasetKeys = useMemo(() => {
     const firstVisible = filteredDatasets.slice(0, 8);
@@ -1367,7 +1369,7 @@ export default function WfsAnalyzer() {
                                     ? "…"
                                     : wmsStatus === "wfs"
                                     ? "✓"
-                                    : "x"}
+                                    : t("onlyWMSavailable")}
                                 </span>
                               )}
                             </div>
