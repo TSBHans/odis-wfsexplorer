@@ -141,6 +141,11 @@ export default function WfsAnalyzer() {
   const [wmsResolutionState, setWmsResolutionState] = useState<
     Record<string, "unchecked" | "checking" | "wfs" | "no-wfs">
   >({});
+  const [visibleDatasetKeys, setVisibleDatasetKeys] = useState<
+    Record<string, boolean>
+  >({});
+  const datasetListRef = useRef<HTMLDivElement>(null);
+  const datasetItemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const getTextByLocalName = (parent: Element, localName: string) => {
     const node = Array.from(parent.getElementsByTagName("*")).find(
@@ -280,8 +285,10 @@ export default function WfsAnalyzer() {
       name?: unknown;
       url?: unknown;
       typ?: unknown;
-      md_id?: unknown;
-      csw_url?: unknown;
+      datasets?: Array<{
+        md_id?: unknown;
+        csw_url?: unknown;
+      }>;
     }>;
 
     const datasets = rawDatasets
@@ -289,8 +296,14 @@ export default function WfsAnalyzer() {
         const name = typeof d.name === "string" ? d.name : "";
         const url = typeof d.url === "string" ? d.url : "";
         const typ = typeof d.typ === "string" ? d.typ.toLowerCase() : undefined;
-        const mdId = typeof d.md_id === "string" ? d.md_id : undefined;
-        const cswUrl = typeof d.csw_url === "string" ? d.csw_url : undefined;
+        const mdId =
+          typeof d.datasets?.[0]?.md_id === "string"
+            ? d.datasets[0].md_id
+            : undefined;
+        const cswUrl =
+          typeof d.datasets?.[0]?.csw_url === "string"
+            ? d.datasets[0].csw_url
+            : undefined;
 
         if (!name && !url && !mdId) return null;
         if (typ && typ !== "wfs" && typ !== "wms") return null;
@@ -629,6 +642,8 @@ export default function WfsAnalyzer() {
       (dataset) =>
         dataset.typ === "wms" &&
         Boolean(dataset.mdId && dataset.cswUrl) &&
+        visibleDatasetKeys[`${dataset.name}-${dataset.mdId || dataset.url}`] ===
+          true &&
         wmsResolutionState[`${dataset.name}-${dataset.mdId || dataset.url}`] ===
           undefined
     );
@@ -695,7 +710,40 @@ export default function WfsAnalyzer() {
     return () => {
       timers.forEach((timerId) => window.clearTimeout(timerId));
     };
-  }, [filteredDatasets, showDatasetDropdown, wmsResolutionState]);
+  }, [filteredDatasets, showDatasetDropdown, visibleDatasetKeys, wmsResolutionState]);
+
+  useEffect(() => {
+    if (!showDatasetDropdown || !datasetListRef.current) {
+      setVisibleDatasetKeys({});
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setVisibleDatasetKeys((prev) => {
+          const next = { ...prev };
+          entries.forEach((entry) => {
+            const key = entry.target.getAttribute("data-dataset-key");
+            if (!key) return;
+            next[key] = entry.isIntersecting;
+          });
+          return next;
+        });
+      },
+      {
+        root: datasetListRef.current,
+        threshold: 0.1,
+      }
+    );
+
+    filteredDatasets.forEach((dataset) => {
+      const key = `${dataset.name}-${dataset.mdId || dataset.url}`;
+      const node = datasetItemRefs.current[key];
+      if (node) observer.observe(node);
+    });
+
+    return () => observer.disconnect();
+  }, [filteredDatasets, showDatasetDropdown]);
 
   // Update the fetchLayerData function to properly pass the URL to fetchLayerDataWithMaxFeatures
   const fetchLayerData = async (layer: LayerInfo, urlOverride?: string) => {
@@ -1241,7 +1289,7 @@ export default function WfsAnalyzer() {
 
               {datasetsParamUrl && showDatasetDropdown && (
                 <div className="absolute z-40 mt-1 w-full rounded-md border bg-white shadow-lg">
-                  <div className="max-h-64 overflow-auto">
+                  <div ref={datasetListRef} className="max-h-64 overflow-auto">
                     {isDatasetsLoading ? (
                       <div className="p-3 text-sm text-slate-500 flex items-center gap-2">
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -1267,6 +1315,10 @@ export default function WfsAnalyzer() {
                         return (
                           <button
                             key={datasetKey}
+                            ref={(node) => {
+                              datasetItemRefs.current[datasetKey] = node;
+                            }}
+                            data-dataset-key={datasetKey}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => handleDatasetSelect(dataset)}
                             className="w-full text-left px-3 py-2 hover:bg-slate-100 border-b last:border-b-0 disabled:opacity-70 disabled:cursor-not-allowed"
