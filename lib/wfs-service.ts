@@ -1,5 +1,65 @@
 // Default maximum number of features to fetch
 const DEFAULT_MAX_FEATURES = 500;
+const WFS_PROXY_PATH = "/api/wfs-proxy";
+
+function getHeaderValue(headers: HeadersInit | undefined, name: string): string | null {
+  if (!headers) return null;
+
+  if (headers instanceof Headers) {
+    return headers.get(name);
+  }
+
+  if (Array.isArray(headers)) {
+    const entry = headers.find(([key]) => key.toLowerCase() === name.toLowerCase());
+    return entry?.[1] ?? null;
+  }
+
+  const recordValue = (headers as Record<string, string | undefined>)[name];
+  if (recordValue) return recordValue;
+
+  const matchedKey = Object.keys(headers as Record<string, string | undefined>).find(
+    (key) => key.toLowerCase() === name.toLowerCase()
+  );
+
+  return matchedKey
+    ? (headers as Record<string, string | undefined>)[matchedKey] ?? null
+    : null;
+}
+
+function isLikelyCorsError(error: unknown): boolean {
+  return (
+    error instanceof TypeError &&
+    (error.message.includes("Failed to fetch") ||
+      error.message.includes("Load failed") ||
+      error.message.includes("NetworkError"))
+  );
+}
+
+async function fetchWithCorsProxy(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    if (typeof window === "undefined" || !isLikelyCorsError(error)) {
+      throw error;
+    }
+
+    const proxyUrl = new URL(WFS_PROXY_PATH, window.location.origin);
+    proxyUrl.searchParams.set("url", url);
+
+    const accept = getHeaderValue(init?.headers, "Accept");
+    if (accept) {
+      proxyUrl.searchParams.set("accept", accept);
+    }
+
+    console.warn("Direct WFS request failed due to likely CORS/network restrictions, retrying through proxy.", url);
+
+    return fetch(proxyUrl.toString(), {
+      method: "GET",
+      cache: "no-store",
+    });
+  }
+}
+
 
 // Update the LayerInfo interface to include outputFormats
 export interface LayerInfo {
@@ -64,7 +124,7 @@ export async function fetchWfsCapabilities(
 
     // Try with fetch first
     try {
-      const response = await fetch(capabilitiesUrl, {
+      const response = await fetchWithCorsProxy(capabilitiesUrl, {
         method: "GET",
         headers: {
           Accept: "text/xml,application/xml",
@@ -110,7 +170,7 @@ export async function fetchWfsCapabilities(
       console.log("Trying alternative URL format:", altUrl);
 
       try {
-        const altResponse = await fetch(altUrl, {
+        const altResponse = await fetchWithCorsProxy(altUrl, {
           method: "GET",
           headers: {
             Accept: "text/xml,application/xml",
@@ -123,7 +183,7 @@ export async function fetchWfsCapabilities(
           console.log("Trying legacy URL format:", legacyUrl);
 
           try {
-            const legacyResponse = await fetch(legacyUrl, {
+            const legacyResponse = await fetchWithCorsProxy(legacyUrl, {
               method: "GET",
               headers: {
                 Accept: "text/xml,application/xml",
@@ -672,7 +732,7 @@ export async function fetchDescribeFeatureType(
     }?${searchParams.toString()}`;
     console.log("Fetching DescribeFeatureType from:", describeUrl);
 
-    const response = await fetch(describeUrl, {
+    const response = await fetchWithCorsProxy(describeUrl, {
       method: "GET",
       headers: {
         Accept: "application/xml,text/xml",
@@ -977,7 +1037,7 @@ export async function fetchFeatureCount(
     console.log("Fetching feature count from:", requestUrl);
 
     // Fetch the count
-    const response = await fetch(requestUrl, {
+    const response = await fetchWithCorsProxy(requestUrl, {
       method: "GET",
       headers: {
         Accept: "text/xml,application/xml",
@@ -997,7 +1057,7 @@ export async function fetchFeatureCount(
         alternativeUrl
       );
 
-      const alternativeResponse = await fetch(alternativeUrl, {
+      const alternativeResponse = await fetchWithCorsProxy(alternativeUrl, {
         method: "GET",
         headers: {
           Accept: "text/xml,application/xml",
@@ -1020,7 +1080,7 @@ export async function fetchFeatureCount(
           legacyUrl
         );
 
-        const legacyResponse = await fetch(legacyUrl, {
+        const legacyResponse = await fetchWithCorsProxy(legacyUrl, {
           method: "GET",
           headers: {
             Accept: "text/xml,application/xml",
@@ -1171,7 +1231,7 @@ export async function fetchWfsData(
     // Try multiple approaches to fetch the data
     try {
       // First attempt with standard parameters
-      const response = await fetch(requestUrl, {
+      const response = await fetchWithCorsProxy(requestUrl, {
         method: "GET",
         headers: {
           Accept: useGmlFallback
@@ -1226,7 +1286,7 @@ export async function fetchWfsData(
         console.log("Trying GML format:", gmlUrl);
 
         try {
-          const gmlResponse = await fetch(gmlUrl, {
+          const gmlResponse = await fetchWithCorsProxy(gmlUrl, {
             method: "GET",
             headers: {
               Accept: "text/xml,application/xml",
@@ -1264,7 +1324,7 @@ export async function fetchWfsData(
       console.log("Trying alternative URL:", alternativeUrl);
 
       try {
-        const alternativeResponse = await fetch(alternativeUrl, {
+        const alternativeResponse = await fetchWithCorsProxy(alternativeUrl, {
           method: "GET",
           headers: {
             Accept: useGmlFallback
@@ -1303,7 +1363,7 @@ export async function fetchWfsData(
         }?${legacyParams.toString()}`;
         console.log("Trying legacy URL:", legacyUrl);
 
-        const legacyResponse = await fetch(legacyUrl, {
+        const legacyResponse = await fetchWithCorsProxy(legacyUrl, {
           method: "GET",
           headers: {
             Accept: useGmlFallback
@@ -1320,7 +1380,7 @@ export async function fetchWfsData(
           const gmlUrl = `${url.origin}${gmlParams.toString()}`;
           console.log("Trying GML format as last resort:", gmlUrl);
 
-          const gmlResponse = await fetch(gmlUrl, {
+          const gmlResponse = await fetchWithCorsProxy(gmlUrl, {
             method: "GET",
             headers: {
               Accept: "text/xml,application/xml",
@@ -1488,7 +1548,7 @@ export async function fetchWfsDataForDownload(
     // Try multiple approaches to fetch the data
     try {
       // First attempt with standard parameters
-      const response = await fetch(requestUrl, {
+      const response = await fetchWithCorsProxy(requestUrl, {
         method: "GET",
         headers: {
           Accept: useGmlFallback
@@ -1524,7 +1584,7 @@ export async function fetchWfsDataForDownload(
       console.log("Trying alternative URL:", alternativeUrl);
 
       try {
-        const alternativeResponse = await fetch(alternativeUrl, {
+        const alternativeResponse = await fetchWithCorsProxy(alternativeUrl, {
           method: "GET",
           headers: {
             Accept: useGmlFallback
@@ -1561,7 +1621,7 @@ export async function fetchWfsDataForDownload(
         const legacyUrl = `${url.origin}${legacyParams.toString()}`;
         console.log("Trying legacy URL:", legacyUrl);
 
-        const legacyResponse = await fetch(legacyUrl, {
+        const legacyResponse = await fetchWithCorsProxy(legacyUrl, {
           method: "GET",
           headers: {
             Accept: useGmlFallback
@@ -1578,7 +1638,7 @@ export async function fetchWfsDataForDownload(
           const gmlUrl = `${url.origin}${gmlParams.toString()}`;
           console.log("Trying GML format as last resort:", gmlUrl);
 
-          const gmlResponse = await fetch(gmlUrl, {
+          const gmlResponse = await fetchWithCorsProxy(gmlUrl, {
             method: "GET",
             headers: {
               Accept: "text/xml,application/xml",
